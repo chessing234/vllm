@@ -2608,11 +2608,14 @@ class Scheduler(SchedulerInterface):
                         stop_reason=request.stop_reason,
                         events=request.take_events(),
                         prefill_stats=prefill_stats,
-                        spec_decode_metrics=(
-                            request.spec_decode_metrics
-                            if finish_reason is not None
-                            else None
-                        ),
+                        # Send the running totals on every output, not only the
+                        # step this scheduler marks finished. A stop string is
+                        # detected later in the output processor, on an output
+                        # whose finish_reason is still None. If the stats stay
+                        # here, that terminal chunk never receives them and the
+                        # streaming usage event omits metrics.speculative_decoding
+                        # even though the Prometheus counters already moved.
+                        spec_decode_metrics=request.spec_decode_metrics,
                         kv_transfer_params=kv_transfer_params,
                         ec_transfer_params=ec_transfer_params,
                         trace_headers=request.trace_headers,

@@ -79,6 +79,36 @@ def test_delta_output_without_new_tokens_returns_empty_logprobs(
     assert len(output.logprobs) == 0
 
 
+def test_finished_completion_keeps_spec_decode_metrics_seen_before_stop() -> None:
+    """A stop string finishes an output the scheduler did not mark finished.
+
+    The metrics object has to already be on the request state, which is why
+    the scheduler sends it on non-terminal outputs too.
+    """
+    from vllm.v1.metrics.stats import RequestSpecDecodeMetrics
+
+    metrics = RequestSpecDecodeMetrics.new(num_spec_tokens=3)
+    metrics.observe(num_draft_tokens=3, num_accepted=2)
+    state = RequestState.__new__(RequestState)
+    state.detokenizer = MagicMock()
+    state.detokenizer.get_next_output_text.return_value = "stop"
+    state.detokenizer.num_output_tokens.return_value = 2
+    state.logprobs_processor = MagicMock()
+    state.logprobs_processor.logprobs = []
+    state.logprobs_processor.cumulative_logprob = None
+    state.output_kind = RequestOutputKind.DELTA
+    state.request_index = 0
+    state.sampling_mask_chunks = []
+    state.routed_experts_chunks = []
+    state.weight_version_starts = []
+    state.spec_decode_metrics = metrics
+
+    pending = state._new_completion_output([1], None, None)
+    assert pending.spec_decode_metrics is None
+    finished = state._new_completion_output([2], FinishReason.STOP, "stop")
+    assert finished.spec_decode_metrics is metrics
+
+
 def test_completion_output_preserves_each_sampling_mask_position() -> None:
     state = RequestState.__new__(RequestState)
     state.detokenizer = MagicMock()
