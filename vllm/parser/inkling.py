@@ -42,7 +42,7 @@ from vllm.entrypoints.generate.base.protocol import ExtractedToolCallInformation
 from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionRequest
 from vllm.parser.abstract_parser import structured_outputs_to_format
 from vllm.parser.engine.events import EventType
-from vllm.parser.engine.parser_engine import ParserEngine
+from vllm.parser.engine.parser_engine import ParserEngine, ReasoningEnd
 from vllm.parser.engine.parser_engine_config import (
     ParserEngineConfig,
     ParserState,
@@ -362,25 +362,43 @@ class InklingParser(ParserEngine):
             if token_id in special_ids:
                 break
 
+    def _tool_reasoning_end_ids(self) -> set[int]:
+        """Tool-block openers. Each is one token and is also content."""
+        vocab = self.vocab
+        return {
+            token_id
+            for token in (
+                CONTENT_INVOKE_TOOL_JSON,
+                CONTENT_INVOKE_TOOL_TEXT,
+                CONTENT_TOOL_ERROR,
+            )
+            if (token_id := vocab.get(token)) is not None
+        }
+
     def is_reasoning_end(self, input_ids: Sequence[int]) -> bool:
         if self._is_inkling2:
             return self._inkling2_is_reasoning_end(input_ids)
         vocab = self.vocab
         reasoning_ids = {vocab.get(CONTENT_THINKING), vocab.get(MESSAGE_MODEL)}
-        ended_ids = {vocab.get(CONTENT_TEXT), vocab.get(CONTENT_MODEL_END_SAMPLING)}
+        ended_ids = {
+            vocab.get(CONTENT_TEXT),
+            vocab.get(CONTENT_MODEL_END_SAMPLING),
+            *self._tool_reasoning_end_ids(),
+        }
         i = rfind_tokens(input_ids, reasoning_ids | ended_ids)
         return i >= 0 and input_ids[i] in ended_ids
 
     def _inkling2_is_reasoning_end(self, input_ids: Sequence[int]) -> bool:
-        """Whether the latest block is a text block of a model message.
+        """Whether the latest model block is text or a tool-call opener.
 
         A prompt that ends between messages has not ended reasoning: the
-        model may open a thinking block.
+        model may open a thinking block. ``<|content_model_end_sampling|>``
+        is a block boundary, not an end, on Inkling2.
         """
         vocab = self.vocab
         text_id = vocab[CONTENT_TEXT]
-        block_ids = {
-            text_id,
+        ended_block_ids = {text_id, *self._tool_reasoning_end_ids()}
+        block_ids = ended_block_ids | {
             vocab[CONTENT_THINKING],
             vocab[CONTENT_MODEL_END_SAMPLING],
         }
@@ -391,10 +409,41 @@ class InklingParser(ParserEngine):
         latest_block = None
         for token_id in reversed(input_ids):
             if token_id in role_ids:
-                return latest_block == text_id and token_id == vocab[MESSAGE_MODEL]
+                return (
+                    latest_block in ended_block_ids
+                    and token_id == vocab[MESSAGE_MODEL]
+                )
             if latest_block is None and token_id in block_ids:
                 latest_block = token_id
-        return latest_block == text_id
+        return latest_block in ended_block_ids
+
+    @property
+    def reasoning_end_token_ids(self) -> frozenset[int]:
+        # token_id_terminals stays empty so the text grammar can drop the
+        # marker. Structured output still needs the single-token ends.
+        vocab = self.vocab
+        explicit = {vocab.get(CONTENT_TEXT)}
+        if not self._is_inkling2:
+            explicit.add(vocab.get(CONTENT_MODEL_END_SAMPLING))
+        return frozenset(
+            token_id
+            for token_id in explicit | self._tool_reasoning_end_ids()
+            if token_id is not None
+        )
+
+    @property
+    def implicit_reasoning_end_token_ids(self) -> frozenset[int]:
+        return frozenset(self._tool_reasoning_end_ids())
+
+    def find_reasoning_end(self, token_ids: Sequence[int]) -> ReasoningEnd | None:
+        end_ids = self.reasoning_end_token_ids
+        if not end_ids:
+            return None
+        implicit = self.implicit_reasoning_end_token_ids
+        for offset, token_id in enumerate(token_ids):
+            if token_id in end_ids:
+                return ReasoningEnd(offset, token_id in implicit)
+        return ReasoningEnd(len(token_ids), False)
 
     def count_reasoning_tokens(self, token_ids: Sequence[int]) -> int:
         vocab = self.vocab
