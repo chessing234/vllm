@@ -263,6 +263,11 @@ pub mod kv_connector {
         /// Late notification counter increments collected since the previous update.
         #[serde(default)]
         pub num_notifications_after_expiry: Vec<u64>,
+        /// Remote reads declined because the remote released the blocks.
+        ///
+        /// `#[serde(default)]` keeps payloads from before this field decodable.
+        #[serde(default)]
+        pub num_declined_expired_reads: Vec<u64>,
     }
 
     /// Mooncake connector transfer telemetry.

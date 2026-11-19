@@ -332,6 +332,7 @@ pub struct SchedulerMetrics {
     pub nixl_num_failed_notifications: Family<EngineLabels, U64Counter>,
     pub nixl_num_kv_expired_reqs: Family<EngineLabels, U64Counter>,
     pub nixl_num_notifications_after_expiry: Family<EngineLabels, U64Counter>,
+    pub nixl_num_declined_expired_reads: Family<EngineLabels, U64Counter>,
 
     // UMBP store connector telemetry. Mirrors `UMBPStorePromMetrics`.
     pub umbp_transfer_submitted_total: UmbpOperationCounterFamily,
@@ -708,6 +709,16 @@ impl SchedulerMetrics {
             nixl_num_notifications_after_expiry.clone(),
         );
 
+        let nixl_num_declined_expired_reads = Family::default();
+        registry.register(
+            "vllm:nixl_num_declined_expired_reads",
+            "Number of remote KV reads declined because the remote had released the \
+             blocks (lease expired) before the read. Each one is a request that follows \
+             kv_load_failure_policy. NOTE: This metric is tracked on the reading \
+             (consumer) instance.",
+            nixl_num_declined_expired_reads.clone(),
+        );
+
         // UMBP store connector telemetry.
         let umbp_transfer_submitted_total = Family::default();
         registry.register(
@@ -826,6 +837,7 @@ impl SchedulerMetrics {
             nixl_num_failed_notifications,
             nixl_num_kv_expired_reqs,
             nixl_num_notifications_after_expiry,
+            nixl_num_declined_expired_reads,
             umbp_transfer_submitted_total,
             umbp_transfer_completed_total,
             umbp_transfer_failed_total,

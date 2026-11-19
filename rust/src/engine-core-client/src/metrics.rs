@@ -160,6 +160,7 @@ struct SchedulerStatsHandles {
     nixl_num_failed_notifications: U64Counter,
     nixl_num_kv_expired_reqs: U64Counter,
     nixl_num_notifications_after_expiry: U64Counter,
+    nixl_num_declined_expired_reads: U64Counter,
 
     // Non-Prometheus interval accumulator for periodic text-log helpers.
     log_stats: SchedulerLogStatsAccumulator,
@@ -353,6 +354,9 @@ fn resolve_scheduler_stats_handles(
         nixl_num_kv_expired_reqs: metrics.nixl_num_kv_expired_reqs.get_or_create_owned(&labels),
         nixl_num_notifications_after_expiry: metrics
             .nixl_num_notifications_after_expiry
+            .get_or_create_owned(&labels),
+        nixl_num_declined_expired_reads: metrics
+            .nixl_num_declined_expired_reads
             .get_or_create_owned(&labels),
         labels,
     }
@@ -643,6 +647,9 @@ fn record_nixl_stats(handles: &SchedulerStatsHandles, stats: &NixlStats) {
     handles
         .nixl_num_notifications_after_expiry
         .inc_by(stats.num_notifications_after_expiry.iter().sum());
+    handles
+        .nixl_num_declined_expired_reads
+        .inc_by(stats.num_declined_expired_reads.iter().sum());
 }
 
 /// Exports `vllm:lora_requests_info` as a single series covering all LoRA
@@ -779,6 +786,7 @@ mod tests {
             num_failed_handshakes: vec![1],
             num_kv_expired_reqs: vec![1],
             num_notifications_after_expiry: vec![2],
+            num_declined_expired_reads: vec![3],
         }
     }
 
@@ -1031,6 +1039,9 @@ mod tests {
         );
         assert!(rendered.contains(
             "vllm:nixl_num_notifications_after_expiry_total{model_name=\"model\",engine=\"0\"} 2"
+        ));
+        assert!(rendered.contains(
+            "vllm:nixl_num_declined_expired_reads_total{model_name=\"model\",engine=\"0\"} 3"
         ));
         assert!(
             rendered
